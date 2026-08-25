@@ -37,10 +37,7 @@
 // Current version, will be used by Scoremore to determine supported features
 #define VERSION "1.3.0"
 
-Adafruit_NeoPixel deckL(DECK_LED_LENGTH_L, DECK_PIN_L, NEO_GRB + NEO_KHZ800);
 Adafruit_NeoPixel deckR(DECK_LED_LENGTH_R, DECK_PIN_R, NEO_GRB + NEO_KHZ800);
-Adafruit_NeoPixel laneL(LANE_LED_LENGTH_L, LANE_PIN_L, NEO_GRB + NEO_KHZ800);
-Adafruit_NeoPixel laneR(LANE_LED_LENGTH_R, LANE_PIN_R, NEO_GRB + NEO_KHZ800);
 
 static inline uint32_t C_WHITE(Adafruit_NeoPixel &s){ return s.Color(255,255,255); }
 static inline uint32_t C_RED  (Adafruit_NeoPixel &s){ return s.Color(255,  0,  0); }
@@ -50,55 +47,21 @@ static inline uint32_t C_OFF  (Adafruit_NeoPixel &s){ return s.Color(  0,  0,  0
 // --- LED mode ---
 enum LaneAnimMode { LANE_IDLE_WHITE=0, LANE_STRIKE_WIPE, LANE_STRIKE_FLASH, LANE_BALL_COMET };
 LaneAnimMode laneMode = LANE_IDLE_WHITE;
-static inline bool laneAnimActive(){ return laneMode==LANE_BALL_COMET||laneMode==LANE_STRIKE_WIPE||laneMode==LANE_STRIKE_FLASH; }
 bool lanePauseArmed=false, lanePaused=false;
 
-bool scoreWindowActive=false, strikePending=false, lightsShownAfterBoot=false;
+bool scoreWindowActive=false, strikePending=false, lightsShownAfterBoot=true;
 
-unsigned long strikeWipeStartMs=0, strikeLastFrameMs=0, flashLastMs=0;
-bool flashOnPhase=false; int flashCycles=0;
-
-unsigned long ballCometStartMs=0, ballCometLastFrame=0;
 
 // ====== FRAME STATE LEDS ======
 
 // Helpers
-void ledsBegin(); void deckAll(uint32_t col); void laneAll(uint32_t col); void ledsShowAll(); void laneShowOnly();
-void laneUpdate(); void startStrikeWipe(); void startStrikeFlash(); void startBallCometImmediate();
+void ledsBegin(); void deckAll(uint32_t col); void ledsShowAll();
 void endAllLaneAnimsToWhite(); void startupWipeWhiteQuick();
 
 // NEW: frame LED helpers
 void updateFrameLEDs();
 void frameLEDsFirstHalf();
 
-// =============== ScoreMore mapping =================
-struct PinMapping {
-  int scoreMore;
-  int arduino;
-  bool isBowling;
-};
-
-const PinMapping pinMap[] = {
-  { SM_PIN_2,        A2,                    true  },  // Bowling pin 2: we map to A2, which is unused
-  { SM_PIN_3,        A3,                    true  },  // Bowling pin 3: we map to A3, which is unused
-  { SM_PIN_4,        A4,                    true  },  // Bowling pin 4: we map to A4, which is unused
-  { SM_PIN_5,        A5,                    true  },  // Bowling pin 5: we map to A5, which is unused
-  { SM_BALL_TRIGGER, BALL_SENSOR_PIN,       false },  // Trigger sensor
-  { SM_AUTO_RESET,   40,                    false },  // Auto reset trigger
-  { SM_SPEED_SENSOR, BALL_SPEED_PIN,        false },  // Ball speed sensor
-  { SM_SPARE_LIGHT,  42,                    false },  // Spare/strike light
-  { SM_STRIKE_LIGHT, 43,                    false },  // Strike light
-  { SM_FIRST_BALL,   44,                    false },  // 1st ball light - we could map this to the actual used 46 instead
-  { SM_SECOND_BALL,  45,                    false },  // 2nd ball light - we could map this to the actual used 47 instead
-  { SM_PIN_1,        A11,                   true  },  // Bowling pin 1: we map to A11, which is unused
-  { SM_PIN_6,        A6,                    true  },  // Bowling pin 6: we map to A6, which is unused
-  { SM_PIN_7,        A7,                    true  },  // Bowling pin 7: we map to A7, which is unused
-  { SM_PIN_8,        A8,                    true  },  // Bowling pin 8: we map to A8, which is unused
-  { SM_PIN_9,        A9,                    true  },  // Bowling pin 9: we map to A9, which is unused
-  { SM_PIN_10,       A10,                   true  },  // Bowling pin 10: we map to A10, which is unused
-  { SM_PINSETTER_RESET, PINSETTER_RESET_PIN,   false  },
-};
-const int maxPins = sizeof(pinMap) / sizeof(pinMap[0]);
 
 Servo LeftRaiseServo, RightRaiseServo, SlideServo, ScissorsServo, LeftSweepServo, RightSweepServo, BallReturnServo;
 
@@ -121,23 +84,6 @@ void setAllLightsWhite();
 unsigned long prevStepMillis=0, prevScoreMillis=0;
 int stepIndex=0;
 
-// ---- ScoreMore ball trigger mirroring ----
-const int SCOREMORE_BALL_LOGICAL_PIN = 6;
-bool smBallPulseActive = false;
-unsigned long smBallPulseStart = 0;
-void scoremoreBallPulse_begin(){
-  Serial.print("INPUT_CHANGE:"); Serial.print(SCOREMORE_BALL_LOGICAL_PIN); Serial.println(":0");
-  smBallPulseActive = true;
-  smBallPulseStart = millis();
-}
-void scoremoreBallPulse_update(){
-  if(!smBallPulseActive) return;
-  if(millis() - smBallPulseStart >= SCOREMORE_BALL_PULSE_MS){
-    Serial.print("INPUT_CHANGE:"); Serial.print(SCOREMORE_BALL_LOGICAL_PIN); Serial.println(":1");
-    smBallPulseActive = false;
-  }
-}
-
 // Ball trigger
 int  ballPrev=HIGH; bool ballPending=false, ballRearmed=true, waitingForBall=true;
 unsigned long ballLowStartUs=0, lastBallHighMs=0;
@@ -157,7 +103,7 @@ bool maintenanceMode = false;
 // Pre-declare lane reset button functions
 void delayWithResetButtonCheck(unsigned long delayMs);
 void resetButtonHandler(int btnState);
-void triggerLaneReset(bool scoreMoreHandlesReset);
+void triggerLaneReset();
 void enterMaintenanceMode();
 
 // ===== Fill-ball (ScoreMore logical pin 7) =====
@@ -166,8 +112,6 @@ bool autoResetEdgeLatched = false;
 bool inFillBall = false;
 bool fillBallShotInProgress = false;
 
-// Inputs
-int inputPins[maxPins], pinStates[maxPins], inputCount=0;
 
 // ======================= TURRET / STEPPER =======================
 AccelStepper stepper1(1, STEP_PIN, DIR_PIN);
@@ -280,9 +224,6 @@ void runSequence(); unsigned long stepDuration(int idx);
 void DeckUp(); void DeckPinSet(); void DeckPinGrab(); void DeckPinDrop();
 void SlidingDeckRelease(); void SlidingDeckHome(); void ScissorsGrab(); void ScissorsDrop();
 void SweepGuard(); void SweepUp(); void SweepBack();
-void checkSerial(); void handleCommand(String cmd); void checkInputChanges();
-bool isTrackedInput(int pin); void removeInputPin(int pin);
-int resolveArduinoPin(int scoreMorePin); int getScoreMorePin(int arduinoPin); bool isBowlingPin(int scoreMorePin);
 
 // Turret
 void runTurret(); void onPinDetected(); void goTo(long pos); void servicePinQueue();
@@ -322,23 +263,7 @@ unsigned long conesFullHoldStartMs=0;
 // bool postSetResumeDelayActive = false;
 // unsigned long postSetResumeStart = 0;
 
-// ---- PAUSE FOR SCOREMORE IF SCOREMORE_USER = 1 ----
-bool waitForScoreMore(){
-  unsigned long start = millis();
 
-  Serial.println("WAITING_FOR_SCOREMORE");
-
-  while (true) {
-    if (Serial && Serial.available() > 0) {
-      Serial.println("SCOREMORE_CONNECTED");
-      return true;
-    }
-
-    // LED's only - no motion from servo's
-    laneUpdate();
-    delay(5);
-  }
-}
 
 // ======================= SETUP =======================
 void setup(){
@@ -355,12 +280,6 @@ void setup(){
   digitalWrite(FRAME_LED1_PIN, LOW);
   digitalWrite(FRAME_LED2_PIN, HIGH);  //indicate to the user that we're in setup
 
-// =========== WAIT FOR SCOREMORE =================  
-  Serial.begin(SCOREMORE_BAUD); delay(1000);
-
-  #if SCOREMORE_USER == 1
-    waitForScoreMore();   // Blocks BEFORE any servo attaches
-  #endif
 
   Serial.println("READY");
 
@@ -429,7 +348,7 @@ void setup(){
   startHomeTurret();
   Serial.println("LOG: starting Turret Homing");
   while(homingActive){
-    runTurret(); updateConveyorOutput(); updateBallReturnDoor(); updateSweepTween(); laneUpdate(); delayWithResetButtonCheck(1);
+    runTurret(); updateConveyorOutput(); updateBallReturnDoor(); updateSweepTween(); delayWithResetButtonCheck(1);
   }
 
   NowCatching=1; goTo(PinPositions[1]); loadedCount=0;
@@ -470,14 +389,12 @@ void loop(){
   runTurret();
   updateConveyorOutput();
   updateBallReturnDoor();
-  laneUpdate();
 
-  scoremoreBallPulse_update();
 
   if(refillLockActive && deckConeCount==10){ refillLockActive=false; }
 
   if(now - prevScoreMillis >= SCORE_INTERVAL){
-    prevScoreMillis=now; checkSerial(); checkInputChanges();
+    prevScoreMillis=now;
   }
 
   // ======================= PAUSE MODE (NEW) =======================
@@ -511,9 +428,7 @@ void loop(){
         lastBallActivityMs = millis();   // NEW: refresh idle timer on ball
         scoreWindowActive=true;
 
-        scoremoreBallPulse_begin();
 
-        startBallCometImmediate();
         onBallThrownDoorClose();
 
         lastPinCatchMs = millis();
@@ -550,10 +465,9 @@ void runSequence(){
   unsigned long need=stepDuration(stepIndex);
   if((now - prevStepMillis < need)) return;
 
-  if(laneAnimActive()) lanePauseArmed=true;
   if(lanePauseArmed){
     if(sweepAnimating) return;
-    if(laneAnimActive()) lanePaused=true; else { lanePauseArmed=false; lanePaused=false; }
+    lanePauseArmed=false; lanePaused=false;
   }
   if(lanePaused) return;
 
@@ -572,7 +486,7 @@ void runSequence(){
   else if(stepIndex==12){ SweepBack(); onSweepBackDoorHoldStart(); }
   else if(stepIndex==13){ SweepGuard(); }
   else if(stepIndex==14){
-    strikePending=true; startStrikeWipe();
+    strikePending=true;
     strikeDetected=false; strikeEdgeLatched=false; strikeLightOn=false;
     stepIndex=30; prevStepMillis=millis(); return;
   }
@@ -745,18 +659,18 @@ void PowerOnSequence(){
 void PrimeFullRackAndSetLaneOnce(){
   releaseDwellActive=false; turretReleaseRequested=false; releaseHeadStartActive=false;
   while(loadedCount<9){
-    runTurret(); updateConveyorOutput(); updateBallReturnDoor(); updateSweepTween(); laneUpdate();
+    runTurret(); updateConveyorOutput(); updateBallReturnDoor(); updateSweepTween();
     if(millis()-prevScoreMillis>=SCORE_INTERVAL){
-      prevScoreMillis=millis(); checkSerial(); checkInputChanges();
+      prevScoreMillis=millis();
     }
     delay(1);
   }
 
   startTurretReleaseCycle();
   while(!dropCycleJustFinished){
-    runTurret(); updateConveyorOutput(); updateBallReturnDoor(); updateSweepTween(); laneUpdate();
+    runTurret(); updateConveyorOutput(); updateBallReturnDoor(); updateSweepTween();
     if(millis()-prevScoreMillis>=SCORE_INTERVAL){
-      prevScoreMillis=millis(); checkSerial(); checkInputChanges();
+      prevScoreMillis=millis();
     }
     delay(1);
   }
@@ -1292,17 +1206,6 @@ void updateBallReturnDoor(){
 // ======================= I/O / UTIL =======================
 void startStrikeCycle(){ strikeDetected=true; strikePending=true; }
 
-void checkSerial(){
-  static String input="";
-  while(Serial.available()>0){
-    char c=Serial.read(); if(c=='\r') continue;
-    if(c=='\n'){
-      input.trim(); if(input.length()>0) handleCommand(input);
-      input="";
-    } else { input+=c; }
-  }
-}
-
 #define SPTR_SIZE 20
 char *strData = NULL;
 char *sPtr[SPTR_SIZE];
@@ -1331,148 +1234,6 @@ int separate (String &str, char **p, int size, char** pdata, char separator){
   return n;
 }  
 
-void handleCommand(String cmd){
-  cmd.trim();
-  if(cmd.startsWith("SET_INPUT:")){
-    int scoreMorePin=cmd.substring(10).toInt();
-    int pin=resolveArduinoPin(scoreMorePin);
-    if(pin!=-1) {
-      if(!isTrackedInput(pin) && inputCount<maxPins){
-        if(isBowlingPin(scoreMorePin)) pinMode(pin, INPUT_PULLUP); else pinMode(pin, INPUT_PULLUP);
-        inputPins[inputCount]=pin; pinStates[inputCount]=digitalRead(pin); inputCount++;
-        Serial.print("ACK_SET_INPUT:"); Serial.println(scoreMorePin);
-      } else {
-        Serial.print("ACK_INPUT_ALREADY_SET:"); Serial.println(scoreMorePin);
-      }
-    } else {
-        Serial.print("ACK_SET_INPUT_INVALID_PIN:"); Serial.println(scoreMorePin);
-    }
-  } else if(cmd.startsWith("SET_OUTPUT:")){
-    int scoreMorePin=cmd.substring(11).toInt();
-    int pin=resolveArduinoPin(scoreMorePin);
-    if(pin!=-1){
-      pinMode(pin, OUTPUT); removeInputPin(pin);
-      Serial.print("ACK_SET_OUTPUT:"); Serial.println(scoreMorePin);
-    } else {
-      Serial.print("ACK_SET_OUTPUT_INVALID_PIN:"); Serial.println(scoreMorePin);
-    }
-  } else if(cmd.startsWith("WRITE:")){
-    int firstColon=cmd.indexOf(':'), secondColon=cmd.indexOf(':', firstColon+1);
-    if(firstColon>0 && secondColon>firstColon){
-      int scoreMorePin=cmd.substring(firstColon+1, secondColon).toInt();
-      int value=cmd.substring(secondColon+1).toInt();
-      int pin=resolveArduinoPin(scoreMorePin);
-      if(pin!=-1){
-        digitalWrite(pin, value);
-        // Strike (ScoreMore logical pin 10)
-        if(scoreMorePin==SM_STRIKE_LIGHT){
-          bool prev=strikeLightOn;
-          strikeLightOn=(value!=0);
-          if(!prev && strikeLightOn && !strikeEdgeLatched){
-            startStrikeCycle(); strikeEdgeLatched=true;
-          }
-          if(prev && !strikeLightOn){ strikeEdgeLatched=false; }
-        }
-        // Fill-ball grant (ScoreMore logical pin 7)
-        else if (scoreMorePin==SM_AUTO_RESET){
-          bool prev = autoResetFillBall;
-          bool isHigh = (value != 0);
-          if(!prev && isHigh && !autoResetEdgeLatched){
-            autoResetFillBall = true;
-            autoResetEdgeLatched = true;
-            inFillBall = true;
-            for(int i=0;i<LANE_LED_LENGTH_L;i++) laneL.setPixelColor(i, C_GREEN(laneL));
-            for(int i=0;i<LANE_LED_LENGTH_R;i++) laneR.setPixelColor(i, C_GREEN(laneR));
-            laneShowOnly();
-            Serial.println("AUTO_RESET_FILL_BALL_ARMED (GREEN ON)");
-          }
-          if(prev && !isHigh){
-            autoResetEdgeLatched = false;
-          }
-        }
-        Serial.print("ACK_WRITE:"); Serial.print(scoreMorePin); Serial.print(":"); Serial.println(value);
-      } else {
-        Serial.print("ACK_WRITE_INVALID_PIN:");Serial.println(scoreMorePin);
-      } 
-    }
-  } else if(cmd=="RESET"){
-    int strikePin=resolveArduinoPin(10);
-    if(strikePin!=-1) digitalWrite(strikePin, LOW);
-    strikeLightOn=false; strikeEdgeLatched=false; strikeDetected=false; strikePending=false;
-    Serial.println("ACK_RESET");
-  } else if(cmd=="CHECK_READY"){
-    Serial.println("READY");
-  } else if(cmd=="VERSION"){
-    Serial.println(VERSION);
-  } else if(cmd.startsWith("PINSETTER:")){
-    char s[100];
-    int N=separate(cmd, sPtr, SPTR_SIZE,&strData, ':');
-    Serial.print("N=");Serial.println(N);
-    if(N>1){
-      Serial.println(sPtr[1]);
-      if (strcmp(sPtr[1],"RESET")==0) {
-        pinsetterResetRequested=true;
-        Serial.println("ACK_PINSETTER_RESET");
-      } else {
-        Serial.println("ACK_UNKNOWN_PINSETTER_COMMAND");
-      }
-    } else {
-      Serial.println("ACK_NO_PINSETTER_COMMAND_GIVEN");
-    }
-    freeData(&strData);
-  } else if(cmd=="debug"){
-    dbgDump();
-  } else {
-    Serial.println("ACK_UNKNOWN_COMMAND");Serial.print("DEBUG: unknown command:");Serial.println(cmd);
-  }
-}
-
-void checkInputChanges(){
-  for(int i=0;i<inputCount;i++){
-    int scoreMorePin=getScoreMorePin(inputPins[i]);
-    int currentState=digitalRead(inputPins[i]);
-    if(scoreMorePin==SM_PINSETTER_RESET){
-      resetButtonHandler(currentState);  //need to handle the reset pin specially
-    } else {
-      if(currentState!=pinStates[i]){
-        pinStates[i]=currentState;
-        if(scoreMorePin!=-1){
-          Serial.print("INPUT_CHANGE:"); Serial.print(scoreMorePin); Serial.print(":"); Serial.println(currentState);
-        }
-      }
-    }
-  }
-  // if scoremore isn't loaded, or if it's not setup to track the reset pin then
-  //   we will handle everything locally
-  if(!isTrackedInput(PINSETTER_RESET_PIN)){
-    resetButtonHandler(-1);  //will need to read in the state of the pin
-  }
-}
-
-bool isTrackedInput(int pin){
-  for(int i=0;i<inputCount;i++) if(inputPins[i]==pin) return true;
-  return false;
-}
-void removeInputPin(int pin){
-  for(int i=0;i<inputCount;i++) if(inputPins[i]==pin){
-    for(int j=i;j<inputCount-1;j++){
-      inputPins[j]=inputPins[j+1]; pinStates[j]=pinStates[j+1];
-    }
-    inputCount--; break;
-  }
-}
-int resolveArduinoPin(int scoreMorePin){
-  for(int i=0;i<maxPins;i++) if(pinMap[i].scoreMore==scoreMorePin) return pinMap[i].arduino;
-  return -1;
-}
-int getScoreMorePin(int arduinoPin){
-  for(int i=0;i<maxPins;i++) if(pinMap[i].arduino==arduinoPin) return pinMap[i].scoreMore;
-  return -1;
-}
-bool isBowlingPin(int scoreMorePin){
-  for(int i=0;i<maxPins;i++) if(pinMap[i].scoreMore==scoreMorePin) return pinMap[i].isBowling;
-  return false;
-}
 
 // ======================= SWEEP TWEEN =======================
 static int clampInt(int v,int lo,int hi){
@@ -1532,9 +1293,9 @@ void waitSweepDone(unsigned long timeoutMs){
 void pumpAll(unsigned long ms){
   unsigned long t0=millis();
   while(millis()-t0<ms){
-    runTurret(); updateConveyorOutput(); updateBallReturnDoor(); updateSweepTween(); laneUpdate();
+    runTurret(); updateConveyorOutput(); updateBallReturnDoor(); updateSweepTween();
     if(millis()-prevScoreMillis>=SCORE_INTERVAL){
-      prevScoreMillis=millis(); checkSerial(); checkInputChanges();
+      prevScoreMillis=millis();
     }
     delay(1);
   }
@@ -1606,141 +1367,29 @@ void EmptyTurret() {
 
 // ======================= LED IMPL =======================
 void ledsBegin(){
-  deckL.begin(); deckR.begin(); laneL.begin(); laneR.begin();
-  deckL.setBrightness(DECK_LED_BRIGHTNESS);
+  deckR.begin();
   deckR.setBrightness(DECK_LED_BRIGHTNESS);
-  laneL.setBrightness(LED_BRIGHTNESS_NORMAL);
-  laneR.setBrightness(LED_BRIGHTNESS_NORMAL);
   laneMode=LANE_IDLE_WHITE;
 }
 
 void deckAll(uint32_t col){
-  for(int i=0;i<DECK_LED_LENGTH_L;i++) deckL.setPixelColor(i,col);
   for(int i=0;i<DECK_LED_LENGTH_R;i++) deckR.setPixelColor(i,col);
 }
-void laneAll(uint32_t col){
-  for(int i=0;i<LANE_LED_LENGTH_L;i++) laneL.setPixelColor(i,col);
-  for(int i=0;i<LANE_LED_LENGTH_R;i++) laneR.setPixelColor(i,col);
-}
-void ledsShowAll(){ deckL.show(); deckR.show(); laneL.show(); laneR.show(); }
-void laneShowOnly(){ laneL.show(); laneR.show(); }
+
+void ledsShowAll(){ deckR.show(); }
 
 // ---- STRIKE EFFECTS ----
-void startStrikeWipe(){
-  if(scoreWindowActive) return;
-  lanePauseArmed=true;
-  laneL.setBrightness(LED_BRIGHTNESS_STRIKE);
-  laneR.setBrightness(LED_BRIGHTNESS_STRIKE);
-  strikeWipeStartMs=millis(); strikeLastFrameMs=0; laneMode=LANE_STRIKE_WIPE;
-}
-
-void startStrikeFlash(){
-  if(scoreWindowActive) return;
-  flashOnPhase=true; flashCycles=0; flashLastMs=millis(); laneMode=LANE_STRIKE_FLASH;
-  uint32_t redL=C_RED(laneL), redR=C_RED(laneR);
-  for(int i=0;i<LANE_LED_LENGTH_L;i++) laneL.setPixelColor(i,redL);
-  for(int i=0;i<LANE_LED_LENGTH_R;i++) laneR.setPixelColor(i,redR);
-  laneShowOnly();
-}
-
-void startBallCometImmediate(){
-  lanePauseArmed=true;
-  laneAll(C_OFF(laneL)); laneShowOnly();
-  ballCometStartMs=millis(); ballCometLastFrame=0; laneMode=LANE_BALL_COMET;
-}
-
 void endAllLaneAnimsToWhite(){
-  laneAll(C_WHITE(laneL)); laneShowOnly(); laneMode=LANE_IDLE_WHITE;
-  laneL.setBrightness(LED_BRIGHTNESS_NORMAL);
-  laneR.setBrightness(LED_BRIGHTNESS_NORMAL);
+  laneMode=LANE_IDLE_WHITE;
   lanePaused=false; lanePauseArmed=false;
 }
 
-void laneUpdate(){
-  unsigned long now=millis();
-
-  // STRIKE WIPE
-  if(!scoreWindowActive && laneMode==LANE_STRIKE_WIPE){
-    unsigned long elapsed=now - strikeWipeStartMs;
-    if(elapsed>=STRIKE_WIPE_MS){
-      startStrikeFlash();
-    }else if(strikeLastFrameMs==0 || (now - strikeLastFrameMs)>=STRIKE_FRAME_MS){
-      strikeLastFrameMs=now;
-      float t=(float)elapsed/(float)STRIKE_WIPE_MS;
-      int n1=(int)(t*LANE_LED_LENGTH_L+0.5f), n2=(int)(t*LANE_LED_LENGTH_R+0.5f);
-      uint32_t redL=C_RED(laneL), redR=C_RED(laneR);
-      for(int i=0;i<LANE_LED_LENGTH_L;i++)
-        laneL.setPixelColor(i,(i<n1)?redL:C_WHITE(laneL));
-      for(int i=0;i<LANE_LED_LENGTH_R;i++)
-        laneR.setPixelColor(i,(i<n2)?redR:C_WHITE(laneR));
-      laneShowOnly();
-    }
-  }
-
-  // STRIKE FLASH
-  if(!scoreWindowActive && laneMode==LANE_STRIKE_FLASH){
-    if(flashOnPhase){
-      if(now - flashLastMs >= FLASH_ON_MS){
-        flashOnPhase=false; 
-        flashLastMs=now;
-        laneAll(C_WHITE(laneL)); 
-        laneShowOnly();
-      }
-    }else{
-      if(now - flashLastMs >= FLASH_OFF_MS){
-        flashLastMs=now; 
-        flashCycles++;
-        if(flashCycles>=FLASH_COUNT){
-          strikePending=false; 
-          endAllLaneAnimsToWhite();
-        }else{
-          flashOnPhase=true; 
-          uint32_t redL=C_RED(laneL), redR=C_RED(laneR);
-          for(int i=0;i<LANE_LED_LENGTH_L;i++) laneL.setPixelColor(i,redL);
-          for(int i=0;i<LANE_LED_LENGTH_R;i++) laneR.setPixelColor(i,redR);
-          laneShowOnly();
-        }
-      }
-    }
-  }
-
-  // BALL COMET
-  if(laneMode==LANE_BALL_COMET){
-    unsigned long elapsed=now - ballCometStartMs;
-    if(elapsed>=BALL_COMET_MS){ 
-      endAllLaneAnimsToWhite(); 
-      return; 
-    }
-    if(now - ballCometLastFrame >= BALL_COMET_FRAME_MS){
-      ballCometLastFrame=now;
-      float t=(float)elapsed/(float)BALL_COMET_MS;
-      int maxIndexL=LANE_LED_LENGTH_L+COMET_LEN, maxIndexR=LANE_LED_LENGTH_R+COMET_LEN;
-      int headL=(int)(t*maxIndexL+0.5f), headR=(int)(t*maxIndexR+0.5f);
-
-      for(int i=0;i<LANE_LED_LENGTH_L;i++) laneL.setPixelColor(i,C_OFF(laneL));
-      for(int i=0;i<LANE_LED_LENGTH_R;i++) laneR.setPixelColor(i,C_OFF(laneR));
-
-      for(int k=0;k<COMET_LEN;k++){
-        int idxL=headL-k, idxR=headR-k;
-        if(idxL>=0 && idxL<LANE_LED_LENGTH_L) laneL.setPixelColor(idxL,C_WHITE(laneL));
-        if(idxR>=0 && idxR<LANE_LED_LENGTH_R) laneR.setPixelColor(idxR,C_WHITE(laneR));
-      }
-      laneShowOnly();
-    }
-  }
-}
 
 void startupWipeWhiteQuick(){
-  deckAll(C_OFF(deckL)); laneAll(C_OFF(laneL)); ledsShowAll();
-  int maxLen=LANE_LED_LENGTH_L;
-  if(LANE_LED_LENGTH_R>maxLen) maxLen=LANE_LED_LENGTH_R;
-  if(DECK_LED_LENGTH_L>maxLen) maxLen=DECK_LED_LENGTH_L;
-  if(DECK_LED_LENGTH_R>maxLen) maxLen=DECK_LED_LENGTH_R;
+  deckAll(C_OFF(deckR)); ledsShowAll();
+  int maxLen=DECK_LED_LENGTH_R;
   for(int i=0;i<maxLen;i++){
-    if(i<DECK_LED_LENGTH_L) deckL.setPixelColor(i,C_WHITE(deckL));
     if(i<DECK_LED_LENGTH_R) deckR.setPixelColor(i,C_WHITE(deckR));
-    if(i<LANE_LED_LENGTH_L) laneL.setPixelColor(i,C_WHITE(laneL));
-    if(i<LANE_LED_LENGTH_R) laneR.setPixelColor(i,C_WHITE(laneR));
     ledsShowAll(); delay(STARTUP_WIPE_MS_PER_STEP);
   }
   frameLEDsFirstHalf();
@@ -1769,7 +1418,6 @@ static inline bool isReadyIdleForPause(){
   if(!lightsShownAfterBoot) return false;
   if(stepIndex != 0) return false;
   if(!waitingForBall) return false;
-  if(laneAnimActive()) return false;
   if(sweepAnimating) return false;
   if(sweepPoseCur != SWEEP_UP) return false;
   return true;
@@ -1777,30 +1425,22 @@ static inline bool isReadyIdleForPause(){
 
 void setAllLightsRed(){
   // Force solid red everywhere (deck + lane)
-  deckAll(C_RED(deckL));
-  laneAll(C_RED(laneL));
+  deckAll(C_RED(deckR));
   ledsShowAll();
 
   // Stop lane animations so laneUpdate() doesn't overwrite the solid red
   laneMode = LANE_IDLE_WHITE;
   lanePaused = false;
   lanePauseArmed = false;
-
-  laneL.setBrightness(LED_BRIGHTNESS_NORMAL);
-  laneR.setBrightness(LED_BRIGHTNESS_NORMAL);
 }
 
 void setAllLightsWhite(){
-  deckAll(C_WHITE(deckL));
-  laneAll(C_WHITE(laneL));
+  deckAll(C_WHITE(deckR));
   ledsShowAll();
 
   laneMode = LANE_IDLE_WHITE;
   lanePaused = false;
   lanePauseArmed = false;
-
-  laneL.setBrightness(LED_BRIGHTNESS_NORMAL);
-  laneR.setBrightness(LED_BRIGHTNESS_NORMAL);
 }
 
 void enterPauseMode(){
@@ -1839,11 +1479,6 @@ void delayWithResetButtonCheck(unsigned long delayMs){
 
 void resetButtonHandler(int btnState){
   // ======================= RESET BUTTON LOGIC =======================
-  bool scoreMoreHandlesReset=true;
-  if(btnState == -1){
-    btnState = digitalRead(PINSETTER_RESET_PIN);
-    scoreMoreHandlesReset=false;
-  }
   // Button just pressed
   if (btnState == LOW && !resetBtnPressed) {
     Serial.println("LOG: reset button just pressed");
@@ -1878,23 +1513,15 @@ void resetButtonHandler(int btnState){
         exitPauseMode();
       } else {
         Serial.println("LOG: reset button pressed, calling triggerLaneReset");
-        triggerLaneReset(scoreMoreHandlesReset);
+        triggerLaneReset();
       }
     }
   }
 }
 // ======================= MAINTENANCE & RESET PROFILES =======================
-void triggerLaneReset(bool scoreMoreHandlesReset) {
-  if(scoreMoreHandlesReset){
-    // 1. Let Scoremore know we're resetting the lane via the physical button
-    Serial.println("LOG: Sending ScoreMore reset pin INPUT_CHANGE messages");
-
-    Serial.print("INPUT_CHANGE:"); Serial.print(SM_PINSETTER_RESET); Serial.println(":1");
-    Serial.print("INPUT_CHANGE:"); Serial.print(SM_PINSETTER_RESET); Serial.println(":0");
-  } else {
-    Serial.println("LOG: Triggering Lane Reset directly");
-    pinsetterResetRequested=true;
-  }
+void triggerLaneReset() {
+  Serial.println("LOG: Triggering Lane Reset directly");
+  pinsetterResetRequested=true;
 }
 
 void enterMaintenanceMode() {
@@ -1915,8 +1542,7 @@ void enterMaintenanceMode() {
   BallReturnServo.detach();
   stepper1.disableOutputs(); // Unlock Turret
   //turn off LEDS in case there's an issue there:
-  deckAll(C_OFF(deckL));
-  laneAll(C_OFF(laneL));
+  deckAll(C_OFF(deckR));
   ledsShowAll();
   //turn off FRAME_LEDs
   digitalWrite(FRAME_LED1_PIN, LOW);
