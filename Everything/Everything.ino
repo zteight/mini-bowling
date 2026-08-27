@@ -268,6 +268,8 @@ unsigned long conesFullHoldStartMs=0;
 // ======================= SETUP =======================
 void setup(){
   ledsBegin();
+  deckAll(C_WHITE(deckR));
+  ledsShowAll();
   pinMode(PINSETTER_RESET_PIN, INPUT_PULLUP);
 
   #ifdef STEPPER_ENABLE_PIN
@@ -581,7 +583,7 @@ void runSequence(){
 }
 
 unsigned long stepDuration(int idx){
-  if(idx==1)  return 3000;
+  if(idx==1)  return 2000;
   if(idx>=11 && idx<=13) return STRIKE_SWEEP_PAUSE_MS;
   if(idx==22) return 3000;
   if(idx==31) return 0;
@@ -617,10 +619,20 @@ void DeckPinDrop() {
   pumpAll(DECK_EXTRA_SETTLE_MS);
 }
 
-void SlidingDeckRelease()  { SlideServo.write(SLIDER_RELEASE_ANGLE); }
-void SlidingDeckHome()     { SlideServo.write(SLIDER_HOME_ANGLE); }
+void SlidingDeckRelease()  { 
+  SlideServo.write(SLIDER_RELEASE_ANGLE); 
+}
+void SlidingDeckHome()     { 
+  SlideServo.write(SLIDER_HOME_ANGLE+10); 
+  pumpAll(SERVO_OVERSHOOT_DELAY);
+  SlideServo.write(SLIDER_HOME_ANGLE); 
+}
 void ScissorsGrab()        { ScissorsServo.write(SCISSOR_GRAB_ANGLE); }
-void ScissorsDrop()        { ScissorsServo.write(SCISSOR_DROP_ANGLE); }
+void ScissorsDrop()        { 
+  ScissorsServo.write(SCISSOR_DROP_ANGLE-10);
+  pumpAll(SERVO_OVERSHOOT_DELAY);
+  ScissorsServo.write(SCISSOR_DROP_ANGLE);
+}
 void BallReturnClosed()    { BallReturnServo.write(BALL_DOOR_CLOSED_ANGLE); }
 void BallReturnOpen()      { BallReturnServo.write(BALL_DOOR_OPEN_ANGLE); }
 
